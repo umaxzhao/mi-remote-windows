@@ -241,6 +241,7 @@ namespace MiRemote.Core
 
         private void ResetInputStateCore(string reason)
         {
+            (_runner as IVoiceRunner)?.VoiceEnd();
             foreach (var key in new List<RemoteKey>(_states.Keys))
             {
                 var st = _states[key];
@@ -301,6 +302,13 @@ namespace MiRemote.Core
                         TransientSystemUI.MarkEntered();
                         Log($"TASK VIEW {e.Key}");
                     }
+                    return;
+                }
+
+                if (e.Key == RemoteKey.Voice && _runner is IVoiceRunner voice
+                    && BindingFor(RemoteKey.Voice)?.Tap is VoiceAction)
+                {
+                    if (e.IsDown) voice.VoiceBegin(); else voice.VoiceEnd();
                     return;
                 }
 

@@ -26,6 +26,19 @@ dotnet run --project src\MiRemote.App\MiRemote.App.csproj -- --self-test
 
 JSON 动作沿用原版 `type` 结构。Windows 修饰键为 `ctrl`、`alt`、`shift`、`win`，并接受部分原版别名。基础层的方向、返回与确认语义由引擎保护，应用控制动作应配置在高级层。
 
+## 语音输入
+
+语音键支持“按住说话、松开结束”。默认绑定豆包输入法 Windows 版的语音快捷键 `right_alt`（右 Alt）。
+如果改过豆包设置里的语音快捷键，在「语音」页把触发键改成同一组合即可，例如 `win+ctrl`。
+
+- 触发方式：`doubao`（按住组合键说话）/ `dictation`（Win+H 系统听写）/ `none`（关闭）
+- 触发模式：`hold`（按住说话，松开结束）/ `tap`（按一下开始，再按结束）
+
+设置保存在 `%APPDATA%\MiRemote\config.json` 的 `settings.voiceTriggerKey`、`voiceTriggerMode`、`voiceFallback`。
+
+注意：当前实现是模拟按键触发输入法自身的语音功能，使用电脑当前麦克风，不接收遥控器内置麦克风音频。
+完整的 ATVV BLE 遥控器麦克风链路尚未移植。
+
 ## 实现与验证范围
 
 - 状态机包括短按、长按、双击、OK 手势、临时层、切换层和空闲退出；`--self-test` 验证逻辑与配置序列化。

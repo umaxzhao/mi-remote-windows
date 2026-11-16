@@ -264,8 +264,12 @@ namespace MiRemote.Core
             public bool? DeleteAllOnHold { get; set; }
             public int? RemoteVendorID { get; set; }
             public int? RemoteProductID { get; set; }
-            /// <summary>Windows 版专有：语音键回退行为。"dictation"=Win+H 系统听写，"none"=忽略，或写动作 JSON。</summary>
-            public string VoiceFallback { get; set; } = "dictation";
+            /// <summary>Windows 版专有：语音键行为。"doubao"=长按右 Alt（豆包输入法），“dictation”=Win+H，“none”=关闭。</summary>
+            public string VoiceFallback { get; set; } = "doubao";
+            /// <summary>语音触发键（按住说话）。豆包输入法 Windows 版默认右 Alt。</summary>
+            public string VoiceTriggerKey { get; set; } = "right_alt";
+            /// <summary>"hold"=按住说话松开结束；"tap"=按一下开始/再按结束。</summary>
+            public string VoiceTriggerMode { get; set; } = "hold";
             /// <summary>Windows 版专有：是否用低级键盘钩子兜底吞掉遥控器键（Raw Input NOLEGACY 失效时用）。</summary>
             public bool UseKeyboardHook { get; set; }
             /// <summary>Windows 版专有：按键重复延迟/间隔（毫秒）。-1 表示关闭自动重复。</summary>

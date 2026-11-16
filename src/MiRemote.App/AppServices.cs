@@ -34,7 +34,12 @@ namespace MiRemote.App
 
         public void Start()
         {
-            Runner = new ActionRunner(Logger, Mru) { VoiceFallback = Config.Settings.VoiceFallback };
+            Runner = new ActionRunner(Logger, Mru)
+            {
+                VoiceFallback = Config.Settings.VoiceFallback,
+                VoiceTriggerKey = Config.Settings.VoiceTriggerKey,
+                VoiceTriggerMode = Config.Settings.VoiceTriggerMode,
+            };
             Runner.OnOverlay = name => ShowOverlay(name);
             Runner.OnAppMruBack = _ => Mru.SwitchBack();
 
@@ -95,6 +100,8 @@ namespace MiRemote.App
             RemoteIdentity.Configure(newConfig.Settings.RemoteVendorID, newConfig.Settings.RemoteProductID);
             Engine.SetConfig(newConfig);
             Runner.VoiceFallback = newConfig.Settings.VoiceFallback;
+            Runner.VoiceTriggerKey = newConfig.Settings.VoiceTriggerKey;
+            Runner.VoiceTriggerMode = newConfig.Settings.VoiceTriggerMode;
             Logger.Info("配置已保存并应用");
         }
 

@@ -12,6 +12,13 @@ namespace MiRemote.Core
         void Run(MAction action);
     }
 
+    /// <summary>语音键的按住/松开语义（由 MappingEngine 在语音键按下/松开时调用）。</summary>
+    public interface IVoiceRunner
+    {
+        void VoiceBegin();
+        void VoiceEnd();
+    }
+
     /// <summary>shell 进程组登记表：stop 时对全部活动组 TERM→KILL 清扫。</summary>
     public sealed class ShellProcessRegistry
     {
@@ -55,12 +62,16 @@ namespace MiRemote.Core
     }
 
     /// <summary>动作执行器：把 MAction 落成真正的系统事件/命令。</summary>
-    public sealed class ActionRunner : IActionRunner
+    public sealed class ActionRunner : IActionRunner, IVoiceRunner
     {
         private readonly Logger _logger;
         private readonly AppMru _mru;
+        private readonly System.Collections.Generic.List<ushort> _voiceKeys = new();
+        private bool _voiceHeld;
 
-        public string VoiceFallback { get; set; } = "dictation";
+        public string VoiceFallback { get; set; } = "doubao";
+        public string VoiceTriggerKey { get; set; } = "right_alt";
+        public string VoiceTriggerMode { get; set; } = "hold";
         public Action<string> OnOverlay { get; set; } = _ => { };
         public Action<string> OnAppMruBack { get; set; } = _ => { };
 
@@ -243,13 +254,55 @@ namespace MiRemote.Core
             }
         }
 
-        private void Voice()
+        private void Voice() => VoiceBegin();
+
+        /// <summary>语音键按下：豆包=按住右 Alt（长按说话）；听写=Win+H；none=关闭。</summary>
+        public void VoiceBegin()
         {
-            // Windows 版 voice 回退：默认触发系统听写（Win+H）。
-            // 真正的 ATVV BLE 语音链路在 Windows 上暂未移植（需要 VB-CABLE 等虚拟声卡）。
             if (VoiceFallback == "none") return;
-            InputSimulator.Combo(0x48, new[] { "win" });
-            _logger.Info("voice → Win+H (使用电脑当前麦克风的系统听写)");
+            if (VoiceFallback == "dictation")
+            {
+                InputSimulator.Combo(0x48, new[] { "win" });
+                _logger.Info("voice → Win+H（系统听写）");
+                return;
+            }
+
+            // 支持组合键（如 win+ctrl）：按顺序按下，松开时逆序松开。
+            _voiceKeys.Clear();
+            foreach (var token in VoiceTriggerKey.Split('+'))
+            {
+                var name = token.Trim();
+                if (name.Length == 0) continue;
+                if (!InputSimulator.TryResolveKey(name, out var vk))
+                {
+                    _logger.Warn($"voice 触发键无法识别: {name}");
+                    _voiceKeys.Clear();
+                    return;
+                }
+                _voiceKeys.Add(vk);
+            }
+            if (_voiceKeys.Count == 0) return;
+
+            foreach (var vk in _voiceKeys) InputSimulator.KeyDown(vk);
+            _logger.Info($"voice → {VoiceTriggerKey} ({(VoiceTriggerMode == "tap" ? "tap" : "hold")})");
+
+            if (VoiceTriggerMode == "tap")
+            {
+                for (int i = _voiceKeys.Count - 1; i >= 0; i--) InputSimulator.KeyUp(_voiceKeys[i]);
+                _voiceKeys.Clear();
+                return;
+            }
+            _voiceHeld = true;
+        }
+
+        /// <summary>语音键松开：结束按住说话。</summary>
+        public void VoiceEnd()
+        {
+            if (!_voiceHeld) return;
+            for (int i = _voiceKeys.Count - 1; i >= 0; i--) InputSimulator.KeyUp(_voiceKeys[i]);
+            _voiceKeys.Clear();
+            _voiceHeld = false;
+            _logger.Info($"voice end ({VoiceTriggerKey})");
         }
 
         private void TabJump(int? dir, int? index)

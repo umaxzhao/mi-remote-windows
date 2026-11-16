@@ -62,7 +62,9 @@ public partial class MainWindow : Window
         HoldMsBox.Text = _svc.Config.Settings.HoldMs.ToString();
         DoubleMsBox.Text = _svc.Config.Settings.DoubleMs.ToString();
         RepeatDelayBox.Text = _svc.Config.Settings.RepeatDelayMs.ToString();
-        VoiceFallbackBox.SelectedIndex = _svc.Config.Settings.VoiceFallback == "none" ? 1 : 0;
+        VoiceFallbackBox.SelectedIndex = _svc.Config.Settings.VoiceFallback switch { "none" => 2, "dictation" => 1, _ => 0 };
+        VoiceKeyBox.Text = _svc.Config.Settings.VoiceTriggerKey;
+        VoiceModeBox.SelectedIndex = _svc.Config.Settings.VoiceTriggerMode == "tap" ? 1 : 0;
         RemoteStatus.Text = "等待遥控器连接";
         DeviceStatus.Text = "等待遥控器连接。这里只显示实际收到的输入，不表示已检测设备连接。";
         _loading = false;
@@ -264,7 +266,14 @@ public partial class MainWindow : Window
         if (MessageBox.Show(this, "放弃尚未保存的通用设置并从磁盘重新加载？", "重新加载", MessageBoxButton.OKCancel) != MessageBoxResult.OK) return;
         try { _svc.ApplyConfig(_svc.ConfigStore.Load()); RefreshSettings(); RefreshProfiles(); RebuildRows(); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "重新加载失败"); }
     }
-    private void SaveVoice_Click(object sender, RoutedEventArgs e) { _svc.Config.Settings.VoiceFallback = VoiceFallbackBox.SelectedIndex == 1 ? "none" : "dictation"; _svc.ApplyConfig(_svc.Config); }
+    private void SaveVoice_Click(object sender, RoutedEventArgs e)
+    {
+        _svc.Config.Settings.VoiceFallback = VoiceFallbackBox.SelectedIndex switch { 1 => "dictation", 2 => "none", _ => "doubao" };
+        var key = VoiceKeyBox.Text.Trim();
+        _svc.Config.Settings.VoiceTriggerKey = string.IsNullOrEmpty(key) ? "right_alt" : key;
+        _svc.Config.Settings.VoiceTriggerMode = VoiceModeBox.SelectedIndex == 1 ? "tap" : "hold";
+        _svc.ApplyConfig(_svc.Config);
+    }
     private void Save_Click(object sender, RoutedEventArgs e)
     {
         if (!int.TryParse(HoldMsBox.Text, out int h) || h < 50 || !int.TryParse(DoubleMsBox.Text, out int d) || d < 50 || !int.TryParse(RepeatDelayBox.Text, out int r) || r < -1) { MessageBox.Show(this, "阈值必须是有效整数，长按和双击阈值至少 50 ms。", "MiRemote"); return; }

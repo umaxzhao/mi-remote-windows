@@ -174,6 +174,21 @@ namespace MiRemote.Core
                 Expect(cfg.Profiles.Count > 0, "presets apply ok");
             }
 
+            // ---- 语音键：按下=开始，松开=结束（不在 tap 阶段延迟触发） ----
+            {
+                var cfg = MakeTestConfig();
+                cfg.Profiles["global"]["voice"] = new KeyBinding { Tap = MAction.Voice };
+                var clock = new ManualClock();
+                var runner = new RecordingRunner();
+                var engine = new MappingEngine(cfg, runner, null, clock);
+                engine.Handle(new ButtonEvent(RemoteKey.Voice, true, 0));
+                Expect(runner.VoiceBegins == 1, "voice key down starts voice immediately");
+                clock.Advance(500);
+                engine.Handle(new ButtonEvent(RemoteKey.Voice, false, 0));
+                Expect(runner.VoiceEnds == 1, "voice key up ends voice");
+                Expect(runner.Actions.Count == 0, "voice key does not emit delayed tap action");
+            }
+
             {
                 var (engine, _, _, _) = MakeEngine();
                 Expect(engine.Route.NativeDirections?.Count == 4, "initial routing snapshot is ready before first app change");
@@ -214,10 +229,14 @@ namespace MiRemote.Core
             return cfg;
         }
 
-        private sealed class RecordingRunner : IActionRunner
+        private sealed class RecordingRunner : IActionRunner, IVoiceRunner
         {
             public List<MAction> Actions { get; } = new();
+            public int VoiceBegins { get; private set; }
+            public int VoiceEnds { get; private set; }
             public void Run(MAction action) => Actions.Add(action);
+            public void VoiceBegin() => VoiceBegins++;
+            public void VoiceEnd() => VoiceEnds++;
         }
 
         private sealed class RecordingDelegate : IMappingEngineDelegate
