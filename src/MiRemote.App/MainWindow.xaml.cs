@@ -1,8 +1,10 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using MiRemote.Core;
 
 namespace MiRemote.App
@@ -11,6 +13,13 @@ namespace MiRemote.App
     {
         private readonly AppServices _svc;
         private string _selectedKey = "up";
+
+        private enum RecSlot { None, Tap, Hold, Double }
+        private RecSlot _recording = RecSlot.None;
+
+        [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vKey);
+
+        private static bool IsKeyDown(int vk) => (GetAsyncKeyState(vk) & 0x8000) != 0;
 
         public MainWindow(AppServices svc)
         {
@@ -73,6 +82,126 @@ namespace MiRemote.App
             DoubleBox.Text = kb?.Double?.ToJson() ?? "";
         }
 
+        private void RecTap_Click(object sender, RoutedEventArgs e) => StartRecording(RecSlot.Tap);
+        private void RecHold_Click(object sender, RoutedEventArgs e) => StartRecording(RecSlot.Hold);
+        private void RecDouble_Click(object sender, RoutedEventArgs e) => StartRecording(RecSlot.Double);
+
+        private void StartRecording(RecSlot slot)
+        {
+            _recording = slot;
+            RecStatus.Text = "请按下快捷键…（Esc 取消）";
+            RecTapBtn.Content = slot == RecSlot.Tap ? "● 录制中…" : "⏺ 录制";
+            RecHoldBtn.Content = slot == RecSlot.Hold ? "● 录制中…" : "⏺ 录制";
+            RecDoubleBtn.Content = slot == RecSlot.Double ? "● 录制中…" : "⏺ 录制";
+        }
+
+        private void StopRecording()
+        {
+            _recording = RecSlot.None;
+            RecStatus.Text = "已录制";
+            RecTapBtn.Content = "⏺ 录制";
+            RecHoldBtn.Content = "⏺ 录制";
+            RecDoubleBtn.Content = "⏺ 录制";
+        }
+
+        private void CancelRecording()
+        {
+            _recording = RecSlot.None;
+            RecStatus.Text = "已取消";
+            RecTapBtn.Content = "⏺ 录制";
+            RecHoldBtn.Content = "⏺ 录制";
+            RecDoubleBtn.Content = "⏺ 录制";
+        }
+
+        protected override void OnPreviewKeyDown(System.Windows.Input.KeyEventArgs e)
+        {
+            if (_recording == RecSlot.None) { base.OnPreviewKeyDown(e); return; }
+            if (e.Key == Key.Escape) { CancelRecording(); e.Handled = true; return; }
+
+            // 纯修饰键按下时不结束录制
+            if (e.Key is Key.LeftCtrl or Key.RightCtrl or Key.LeftShift or Key.RightShift
+                or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin)
+            {
+                e.Handled = true;
+                return;
+            }
+
+            var name = KeyToName(e.Key);
+            if (name is null) { e.Handled = true; return; }
+
+            var mods = BuildMods();
+            var action = new { type = "key_stroke", key = name, mods = mods.ToArray() };
+            var json = System.Text.Json.JsonSerializer.Serialize(action);
+
+            switch (_recording)
+            {
+                case RecSlot.Tap: TapBox.Text = json; break;
+                case RecSlot.Hold: HoldBox.Text = json; break;
+                case RecSlot.Double: DoubleBox.Text = json; break;
+            }
+            StopRecording();
+            e.Handled = true;
+        }
+
+        private System.Collections.Generic.List<string> BuildMods()
+        {
+            var mods = new System.Collections.Generic.List<string>();
+            if (IsKeyDown(0xA2)) mods.Add("left_ctrl");
+            else if (IsKeyDown(0xA3)) mods.Add("right_ctrl");
+            if (IsKeyDown(0xA0)) mods.Add("left_shift");
+            else if (IsKeyDown(0xA1)) mods.Add("right_shift");
+            if (IsKeyDown(0xA4)) mods.Add("left_alt");
+            else if (IsKeyDown(0xA5)) mods.Add("right_alt");
+            if (IsKeyDown(0x5B)) mods.Add("left_win");
+            else if (IsKeyDown(0x5C)) mods.Add("right_win");
+            // 兜底：Keyboard.Modifiers 有但具体左右未识别时
+            if (mods.Count == 0)
+            {
+                if ((Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control) mods.Add("left_ctrl");
+                if ((Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift) mods.Add("left_shift");
+                if ((Keyboard.Modifiers & ModifierKeys.Alt) == ModifierKeys.Alt) mods.Add("left_alt");
+            }
+            return mods;
+        }
+
+        private static string? KeyToName(Key key)
+        {
+            if (key >= Key.A && key <= Key.Z) return key.ToString().ToLowerInvariant();
+            if (key >= Key.D0 && key <= Key.D9) return ((char)('0' + (key - Key.D0))).ToString();
+            if (key >= Key.F1 && key <= Key.F24) return "f" + (key - Key.F1 + 1);
+            return key switch
+            {
+                Key.Return => "return",
+                Key.Tab => "tab",
+                Key.Space => "space",
+                Key.Back => "delete",
+                Key.Delete => "forward_delete",
+                Key.Escape => null,
+                Key.Up => "up_arrow",
+                Key.Down => "down_arrow",
+                Key.Left => "left_arrow",
+                Key.Right => "right_arrow",
+                Key.Home => "home",
+                Key.End => "end",
+                Key.PageUp => "page_up",
+                Key.PageDown => "page_down",
+                Key.Insert => "insert",
+                Key.PrintScreen => "print_screen",
+                Key.OemOpenBrackets => "left_bracket",
+                Key.OemCloseBrackets => "right_bracket",
+                Key.OemMinus => "minus",
+                Key.OemPlus => "equal",
+                Key.OemComma => "comma",
+                Key.OemPeriod => "period",
+                Key.OemQuestion => "slash",
+                Key.OemSemicolon => "semicolon",
+                Key.OemQuotes => "quote",
+                Key.OemBackslash => "backslash",
+                Key.OemTilde => "grave",
+                _ => null,
+            };
+        }
+
         private void Save_Click(object sender, RoutedEventArgs e)
         {
             if (int.TryParse(HoldMsBox.Text, out var h)) _svc.Config.Settings.HoldMs = h;
@@ -88,10 +217,10 @@ namespace MiRemote.App
         {
             if (!_svc.Config.Profiles.TryGetValue("global", out var g))
             {
-                g = new System.Collections.Generic.Dictionary<string, KeyBinding>();
+                g = new System.Collections.Generic.Dictionary<string, MiRemote.Core.KeyBinding>();
                 _svc.Config.Profiles["global"] = g;
             }
-            var kb = g.TryGetValue(_selectedKey, out var existing) ? existing : new KeyBinding();
+            var kb = g.TryGetValue(_selectedKey, out var existing) ? existing : new MiRemote.Core.KeyBinding();
             kb.Tap = ParseAction(TapBox.Text);
             kb.Hold = ParseAction(HoldBox.Text);
             kb.Double = ParseAction(DoubleBox.Text);
