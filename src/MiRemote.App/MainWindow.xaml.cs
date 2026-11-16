@@ -16,19 +16,24 @@ namespace MiRemote.App
         {
             InitializeComponent();
             _svc = svc;
-            Title = "MiRemote - Windows 版";
+
             PauseCheck.IsChecked = _svc.Engine.IsSuspended;
             PauseCheck.Checked += (_, _) => _svc.ToggleSuspended();
             PauseCheck.Unchecked += (_, _) => _svc.ToggleSuspended();
+
+            StartEnabledCheck.IsChecked = _svc.Config.Settings.StartEnabled;
 
             HoldMsBox.Text = _svc.Config.Settings.HoldMs.ToString();
             DoubleMsBox.Text = _svc.Config.Settings.DoubleMs.ToString();
             RepeatDelayBox.Text = _svc.Config.Settings.RepeatDelayMs.ToString();
 
-            foreach (var k in RemoteKeys.All) KeyList.Items.Add(k.RawName() + "  (" + k.DisplayName() + ")");
+            foreach (var k in RemoteKeys.All)
+                KeyList.Items.Add(k.RawName() + "  " + k.DisplayName());
             KeyList.SelectedIndex = 0;
+            KeyList.SelectionChanged += KeyList_SelectionChanged;
 
-            foreach (var p in Presets.All) PresetList.Items.Add(p.DisplayName + "  [" + (p.BundleId ?? "global") + "]");
+            foreach (var p in Presets.All)
+                PresetList.Items.Add(p.DisplayName + "  [" + (p.BundleId ?? "global") + "]");
             ConfigPathText.Text = "配置路径: " + _svc.ConfigStore.ConfigPath;
 
             _svc.Logger.Line += line =>
@@ -41,13 +46,27 @@ namespace MiRemote.App
                     FullLog.ScrollToEnd();
                 }));
             };
+
+            NavList.SelectedIndex = 0;
+        }
+
+        private void NavList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (NavList.SelectedItem is not ListBoxItem item) return;
+            var tag = item.Tag as string ?? "";
+            PageMapping.Visibility = tag == "mapping" ? Visibility.Visible : Visibility.Collapsed;
+            PageProfile.Visibility = tag == "profile" ? Visibility.Visible : Visibility.Collapsed;
+            PageVoice.Visibility = tag == "voice" ? Visibility.Visible : Visibility.Collapsed;
+            PageGeneral.Visibility = tag == "general" ? Visibility.Visible : Visibility.Collapsed;
+            PageLog.Visibility = tag == "log" ? Visibility.Visible : Visibility.Collapsed;
         }
 
         private void KeyList_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (KeyList.SelectedItem is null) return;
-            var raw = KeyList.SelectedItem.ToString()!.Split(' ')[0];
+            var raw = KeyList.SelectedItem.ToString()!.Split(new[] { ' ', ' ' }, StringSplitOptions.RemoveEmptyEntries)[0];
             _selectedKey = raw;
+            CurrentKeyLabel.Text = raw;
             var kb = _svc.Config.Profiles.TryGetValue("global", out var g) && g.TryGetValue(raw, out var b) ? b : null;
             TapBox.Text = kb?.Tap?.ToJson() ?? "";
             HoldBox.Text = kb?.Hold?.ToJson() ?? "";
@@ -59,12 +78,19 @@ namespace MiRemote.App
             if (int.TryParse(HoldMsBox.Text, out var h)) _svc.Config.Settings.HoldMs = h;
             if (int.TryParse(DoubleMsBox.Text, out var d)) _svc.Config.Settings.DoubleMs = d;
             if (int.TryParse(RepeatDelayBox.Text, out var r)) _svc.Config.Settings.RepeatDelayMs = r;
+            _svc.Config.Settings.StartEnabled = StartEnabledCheck.IsChecked == true;
+            _svc.Config.Settings.VoiceFallback = VoiceFallbackBox.SelectedIndex == 0 ? "dictation" : "none";
             _svc.ApplyConfig(_svc.Config);
+            System.Windows.MessageBox.Show("已保存", "MiRemote");
         }
 
         private void SaveKey_Click(object sender, RoutedEventArgs e)
         {
-            if (!_svc.Config.Profiles.TryGetValue("global", out var g)) { g = new System.Collections.Generic.Dictionary<string, KeyBinding>(); _svc.Config.Profiles["global"] = g; }
+            if (!_svc.Config.Profiles.TryGetValue("global", out var g))
+            {
+                g = new System.Collections.Generic.Dictionary<string, KeyBinding>();
+                _svc.Config.Profiles["global"] = g;
+            }
             var kb = g.TryGetValue(_selectedKey, out var existing) ? existing : new KeyBinding();
             kb.Tap = ParseAction(TapBox.Text);
             kb.Hold = ParseAction(HoldBox.Text);
@@ -80,15 +106,8 @@ namespace MiRemote.App
             try { return ConfigJson.DeserializeAction(text); } catch { return null; }
         }
 
-        private void ApplyPreset_Click(object sender, RoutedEventArgs e)
-        {
-            ApplyPreset(false);
-        }
-
-        private void ApplyPresetForce_Click(object sender, RoutedEventArgs e)
-        {
-            ApplyPreset(true);
-        }
+        private void ApplyPreset_Click(object sender, RoutedEventArgs e) => ApplyPreset(false);
+        private void ApplyPresetForce_Click(object sender, RoutedEventArgs e) => ApplyPreset(true);
 
         private void ApplyPreset(bool force)
         {
@@ -121,11 +140,11 @@ namespace MiRemote.App
             HoldMsBox.Text = cfg.Settings.HoldMs.ToString();
             DoubleMsBox.Text = cfg.Settings.DoubleMs.ToString();
             RepeatDelayBox.Text = cfg.Settings.RepeatDelayMs.ToString();
+            StartEnabledCheck.IsChecked = cfg.Settings.StartEnabled;
         }
 
         protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
         {
-            // 关窗不退出服务，隐藏到托盘
             e.Cancel = true;
             Hide();
         }
