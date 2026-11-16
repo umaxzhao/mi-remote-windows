@@ -174,6 +174,17 @@ namespace MiRemote.Core
                 Expect(cfg.Profiles.Count > 0, "presets apply ok");
             }
 
+            {
+                var (engine, _, _, _) = MakeEngine();
+                Expect(engine.Route.NativeDirections?.Count == 4, "initial routing snapshot is ready before first app change");
+                var json = ConfigJson.Serialize(DefaultConfig.Build());
+                Expect(json.Contains("\"profiles\"") && json.Contains("\"holdMs\""), "saved configuration uses original camelCase field names");
+                bool rejected = false;
+                try { ConfigJson.DeserializeAction("{\"type\":\"typo_action\"}"); }
+                catch (System.Text.Json.JsonException) { rejected = true; }
+                Expect(rejected, "unknown action rejected instead of silently clearing binding");
+            }
+
             if (ok) Console.WriteLine("[SelfTest] all scenarios passed");
             return ok;
         }

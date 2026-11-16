@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Windows;
 
 namespace MiRemote.App
@@ -10,18 +11,29 @@ namespace MiRemote.App
         {
             if (args.Length > 0 && args[0] == "--self-test")
             {
-                bool ok = MiRemote.Core.SelfTest.Run();
-                Environment.Exit(ok ? 0 : 1);
+                Environment.ExitCode = MiRemote.Core.SelfTest.Run() ? 0 : 1;
                 return;
             }
 
+            using var instance = new Mutex(true, @"Local\MiRemote.Windows", out bool created);
+            if (!created)
+            {
+                System.Windows.MessageBox.Show("MiRemote 已在运行，请从系统托盘打开设置。", "MiRemote");
+                return;
+            }
             var app = new System.Windows.Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
             var services = new AppServices();
-            services.Start();
-            // 显示主窗口
-            services.ShowMainWindow();
-            app.Run();
-            services.Stop();
+            try
+            {
+                services.Start();
+                services.ShowMainWindow();
+                app.Run();
+            }
+            finally
+            {
+                services.Stop();
+                instance.ReleaseMutex();
+            }
         }
     }
 }

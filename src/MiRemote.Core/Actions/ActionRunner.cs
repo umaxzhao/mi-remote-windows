@@ -60,6 +60,7 @@ namespace MiRemote.Core
         private readonly Logger _logger;
         private readonly AppMru _mru;
 
+        public string VoiceFallback { get; set; } = "dictation";
         public Action<string> OnOverlay { get; set; } = _ => { };
         public Action<string> OnAppMruBack { get; set; } = _ => { };
 
@@ -246,8 +247,9 @@ namespace MiRemote.Core
         {
             // Windows 版 voice 回退：默认触发系统听写（Win+H）。
             // 真正的 ATVV BLE 语音链路在 Windows 上暂未移植（需要 VB-CABLE 等虚拟声卡）。
+            if (VoiceFallback == "none") return;
             InputSimulator.Combo(0x48, new[] { "win" });
-            _logger.Info("voice → Win+H (系统听写)");
+            _logger.Info("voice → Win+H (使用电脑当前麦克风的系统听写)");
         }
 
         private void TabJump(int? dir, int? index)

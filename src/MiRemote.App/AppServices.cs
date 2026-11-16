@@ -1,11 +1,8 @@
 using System;
 using System.IO;
 using System.Linq;
-using System.Threading;
 using System.Windows;
-using System.Windows.Forms;
 using MiRemote.Core;
-
 namespace MiRemote.App
 {
     public class AppServices
@@ -37,13 +34,17 @@ namespace MiRemote.App
 
         public void Start()
         {
-            Runner = new ActionRunner(Logger, Mru);
+            Runner = new ActionRunner(Logger, Mru) { VoiceFallback = Config.Settings.VoiceFallback };
             Runner.OnOverlay = name => ShowOverlay(name);
             Runner.OnAppMruBack = _ => Mru.SwitchBack();
 
-            Engine = new MappingEngine(Config, Runner, new EngineDelegate(Logger), new RealScheduler(msg => System.Windows.Application.Current?.Dispatcher.Invoke(msg)));
-            Engine.OnEscapeHatch = () => System.Windows.Application.Current?.Dispatcher.Invoke(() => CloseAllOverlays());
-            Engine.OnSuspendChanged = suspended => Logger.Info(suspended ? "遥控已暂停" : "遥控已恢复");
+            Engine = new MappingEngine(Config, Runner, new EngineDelegate(Logger), new RealScheduler(msg => System.Windows.Application.Current?.Dispatcher.BeginInvoke(msg)));
+            Engine.OnEscapeHatch = () => System.Windows.Application.Current?.Dispatcher.BeginInvoke(new Action(CloseAllOverlays));
+            Engine.OnSuspendChanged = suspended =>
+            {
+                if (suspended) Router?.StopAll();
+                Logger.Info(suspended ? "遥控已暂停" : "遥控已恢复");
+            };
 
             Router = new KeyRouter(Engine, Logger);
 
@@ -93,6 +94,7 @@ namespace MiRemote.App
             ConfigStore.Save(newConfig);
             RemoteIdentity.Configure(newConfig.Settings.RemoteVendorID, newConfig.Settings.RemoteProductID);
             Engine.SetConfig(newConfig);
+            Runner.VoiceFallback = newConfig.Settings.VoiceFallback;
             Logger.Info("配置已保存并应用");
         }
 
@@ -164,15 +166,16 @@ namespace MiRemote.App
         private MainWindow? _mainWindow;
         public void ShowMainWindow()
         {
-            if (_mainWindow is null || !_mainWindow.IsVisible)
+            if (_mainWindow is null)
             {
                 _mainWindow = new MainWindow(this);
                 _mainWindow.Show();
             }
             else
             {
-                _mainWindow.Activate();
+                _mainWindow.Show();
                 _mainWindow.WindowState = WindowState.Normal;
+                _mainWindow.Activate();
             }
         }
 

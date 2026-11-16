@@ -10,6 +10,7 @@ namespace MiRemote.Core
         public static readonly JsonSerializerOptions Default = new()
         {
             PropertyNameCaseInsensitive = true,
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             WriteIndented = true,
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
             Converters = { new ActionJsonConverter() },

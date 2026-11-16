@@ -140,6 +140,7 @@ namespace MiRemote.Core
             _delegate = del;
             _scheduler = scheduler ?? new RealScheduler();
             _globalProfile = ProfileOf(config, "global");
+            PublishTapRoute();
         }
 
         private static Dictionary<string, KeyBinding> ProfileOf(MappingConfig config, string name) =>
@@ -366,7 +367,7 @@ namespace MiRemote.Core
             ScheduleAfter(_config.Settings.HoldMs, () => OnHoldTimer(key, token));
         }
 
-        private void ScheduleAfter(int ms, Action work) => _scheduler.Schedule(ms, work);
+        private void ScheduleAfter(int ms, Action work) => _scheduler.Schedule(ms, () => Run(work));
 
         private void OnEscapeTimer(int token)
         {

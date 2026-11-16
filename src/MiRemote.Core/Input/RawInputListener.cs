@@ -48,7 +48,7 @@ namespace MiRemote.Core
 
             var devices = new Win32.RAWINPUTDEVICE[]
             {
-                new() { usUsagePage = 0x01, usUsage = 0x06, dwFlags = (uint)(Win32.RIDEV_INPUTSINK | Win32.RIDEV_NOLEGACY | Win32.RIDEV_DEVNOTIFY), hwndTarget = _hwnd },
+                new() { usUsagePage = 0x01, usUsage = 0x06, dwFlags = (uint)(Win32.RIDEV_INPUTSINK | Win32.RIDEV_DEVNOTIFY), hwndTarget = _hwnd },
                 new() { usUsagePage = 0x0C, usUsage = 0x01, dwFlags = (uint)(Win32.RIDEV_INPUTSINK | Win32.RIDEV_DEVNOTIFY), hwndTarget = _hwnd },
             };
             if (!Win32.RegisterRawInputDevices(devices, (uint)devices.Length, (uint)Marshal.SizeOf<Win32.RAWINPUTDEVICE>()))

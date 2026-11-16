@@ -203,7 +203,7 @@ namespace MiRemote.Core
 
     public sealed class TextStep : MacroStep
     {
-        public string Text { get; }
+        public new string Text { get; }
         public TextStep(string text) => Text = text;
         public override void Write(Utf8JsonWriter w)
         {

@@ -69,9 +69,8 @@ namespace MiRemote.Core
             catch (Exception ex)
             {
                 _logger.Warn($"配置加载失败，回退默认: {ex.Message}");
-                var cfg = DefaultConfig.Build();
-                Save(cfg);
-                return cfg;
+                // 保留损坏的用户文件，便于修复；禁止把自定义映射覆盖成默认值。
+                return DefaultConfig.Build();
             }
         }
 
@@ -79,7 +78,9 @@ namespace MiRemote.Core
         {
             try
             {
-                File.WriteAllText(ConfigPath, ConfigJson.Serialize(config));
+                var temp = ConfigPath + ".tmp";
+                File.WriteAllText(temp, ConfigJson.Serialize(config));
+                File.Move(temp, ConfigPath, overwrite: true);
             }
             catch (Exception ex)
             {
