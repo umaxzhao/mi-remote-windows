@@ -112,7 +112,7 @@ namespace MiRemote.App
         private void InstallRecHook()
         {
             _recHookProc = RecHookCallback;
-            _recHook = Win32.SetWindowsHookEx(Win32.WH_KEYBOARD_LL, _recHookProc, Win32.GetModuleHandle(null), 0);
+            _recHook = Win32.SetWindowsHookEx(Win32.WH_KEYBOARD_LL, _recHookProc, IntPtr.Zero, 0);
             if (_recHook == IntPtr.Zero)
                 _svc.Logger.Info("[REC] SetWindowsHookEx 失败: " + Marshal.GetLastWin32Error());
             else
@@ -131,6 +131,9 @@ namespace MiRemote.App
 
         private IntPtr RecHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
         {
+            try
+            {
+                // (diagnostic removed)
             if (nCode == Win32.HC_ACTION && (wParam == (IntPtr)Win32.WM_KEYDOWN || wParam == (IntPtr)Win32.WM_SYSKEYDOWN))
             {
                 var kb = Marshal.PtrToStructure<Win32.KBDLLHOOKSTRUCT>(lParam);
@@ -152,9 +155,10 @@ namespace MiRemote.App
 
                 var wpfKey = KeyInterop.KeyFromVirtualKey(vk);
                 var name = KeyToName(wpfKey);
+                _svc.Logger.Info($"[REC] cb vk=0x{vk:X2} wpfKey={wpfKey} name={name ?? "<null>"}");
                 if (name is null)
                 {
-                    Dispatcher.BeginInvoke(new Action(() => { RecStatus.Text = "未识别的键: " + wpfKey; }));
+                    RecStatus.Text = "未识别的键: " + wpfKey;
                     return (IntPtr)1;
                 }
 
@@ -162,20 +166,28 @@ namespace MiRemote.App
                 var action = new { type = "key_stroke", key = name, mods = mods.ToArray() };
                 var json = System.Text.Json.JsonSerializer.Serialize(action);
                 var slot = _recording;
-                Dispatcher.BeginInvoke(new Action(() =>
+                _svc.Logger.Info($"[REC] captured {name} mods={string.Join(",", mods)} slot={slot}");
+                switch (slot)
                 {
-                    switch (slot)
-                    {
-                        case RecSlot.Tap: TapBox.Text = json; break;
-                        case RecSlot.Hold: HoldBox.Text = json; break;
-                        case RecSlot.Double: DoubleBox.Text = json; break;
-                    }
-                    StopRecording();
-                }));
+                    case RecSlot.Tap: TapBox.Text = json; break;
+                    case RecSlot.Hold: HoldBox.Text = json; break;
+                    case RecSlot.Double: DoubleBox.Text = json; break;
+                }
                 UninstallRecHook();
+                _recording = RecSlot.None;
+                RecStatus.Text = "已录制";
+                RecTapBtn.Content = "⏺ 录制";
+                RecHoldBtn.Content = "⏺ 录制";
+                RecDoubleBtn.Content = "⏺ 录制";
                 return (IntPtr)1; // 吞掉该按键，避免泄漏到前台
             }
             return Win32.CallNextHookEx(_recHook, nCode, wParam, lParam);
+            }
+            catch (Exception ex)
+            {
+                try { _svc.Logger.Info("[REC] hook exception: " + ex); } catch { }
+                return Win32.CallNextHookEx(_recHook, nCode, wParam, lParam);
+            }
         }
 
         private void StopRecording()
