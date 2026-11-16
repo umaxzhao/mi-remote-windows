@@ -16,6 +16,8 @@ namespace MiRemote.App
 
         private enum RecSlot { None, Tap, Hold, Double }
         private RecSlot _recording = RecSlot.None;
+        private IntPtr _recHook = IntPtr.Zero;
+        private Win32.HookProc? _recHookProc;
 
         [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vKey);
 
@@ -100,14 +102,85 @@ namespace MiRemote.App
         private void StartRecording(RecSlot slot)
         {
             _recording = slot;
+            InstallRecHook();
             RecStatus.Text = "请按下快捷键…（Esc 取消）";
             RecTapBtn.Content = slot == RecSlot.Tap ? "● 录制中…" : "⏺ 录制";
             RecHoldBtn.Content = slot == RecSlot.Hold ? "● 录制中…" : "⏺ 录制";
             RecDoubleBtn.Content = slot == RecSlot.Double ? "● 录制中…" : "⏺ 录制";
         }
 
+        private void InstallRecHook()
+        {
+            _recHookProc = RecHookCallback;
+            _recHook = Win32.SetWindowsHookEx(Win32.WH_KEYBOARD_LL, _recHookProc, Win32.GetModuleHandle(null), 0);
+            if (_recHook == IntPtr.Zero)
+                _svc.Logger.Info("[REC] SetWindowsHookEx 失败: " + Marshal.GetLastWin32Error());
+            else
+                _svc.Logger.Info("[REC] 低级键盘钩子已安装");
+        }
+
+        private void UninstallRecHook()
+        {
+            if (_recHook != IntPtr.Zero)
+            {
+                Win32.UnhookWindowsHookEx(_recHook);
+                _recHook = IntPtr.Zero;
+            }
+            _recHookProc = null;
+        }
+
+        private IntPtr RecHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+        {
+            if (nCode == Win32.HC_ACTION && (wParam == (IntPtr)Win32.WM_KEYDOWN || wParam == (IntPtr)Win32.WM_SYSKEYDOWN))
+            {
+                var kb = Marshal.PtrToStructure<Win32.KBDLLHOOKSTRUCT>(lParam);
+                int vk = (int)kb.vkCode;
+
+                if (vk == 0x1B) // Escape 取消
+                {
+                    Dispatcher.BeginInvoke(new Action(CancelRecording));
+                    UninstallRecHook();
+                    return (IntPtr)1;
+                }
+
+                // 纯修饰键：不结束录制，放行
+                if (vk is 0xA0 or 0xA1 or 0xA2 or 0xA3 or 0xA4 or 0xA5 or 0x5B or 0x5C
+                    or 0x10 or 0x11 or 0x12)
+                {
+                    return Win32.CallNextHookEx(_recHook, nCode, wParam, lParam);
+                }
+
+                var wpfKey = KeyInterop.KeyFromVirtualKey(vk);
+                var name = KeyToName(wpfKey);
+                if (name is null)
+                {
+                    Dispatcher.BeginInvoke(new Action(() => { RecStatus.Text = "未识别的键: " + wpfKey; }));
+                    return (IntPtr)1;
+                }
+
+                var mods = BuildMods();
+                var action = new { type = "key_stroke", key = name, mods = mods.ToArray() };
+                var json = System.Text.Json.JsonSerializer.Serialize(action);
+                var slot = _recording;
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    switch (slot)
+                    {
+                        case RecSlot.Tap: TapBox.Text = json; break;
+                        case RecSlot.Hold: HoldBox.Text = json; break;
+                        case RecSlot.Double: DoubleBox.Text = json; break;
+                    }
+                    StopRecording();
+                }));
+                UninstallRecHook();
+                return (IntPtr)1; // 吞掉该按键，避免泄漏到前台
+            }
+            return Win32.CallNextHookEx(_recHook, nCode, wParam, lParam);
+        }
+
         private void StopRecording()
         {
+            UninstallRecHook();
             _recording = RecSlot.None;
             RecStatus.Text = "已录制";
             RecTapBtn.Content = "⏺ 录制";
@@ -117,6 +190,7 @@ namespace MiRemote.App
 
         private void CancelRecording()
         {
+            UninstallRecHook();
             _recording = RecSlot.None;
             RecStatus.Text = "已取消";
             RecTapBtn.Content = "⏺ 录制";
@@ -127,6 +201,7 @@ namespace MiRemote.App
         protected override void OnPreviewKeyDown(System.Windows.Input.KeyEventArgs e)
         {
             if (_recording == RecSlot.None) { base.OnPreviewKeyDown(e); return; }
+            _svc.Logger.Info($"[REC] PreviewKeyDown key={e.Key} recording={_recording}");
             if (e.Key == Key.Escape) { CancelRecording(); e.Handled = true; return; }
 
             // 纯修饰键按下时不结束录制
@@ -138,7 +213,13 @@ namespace MiRemote.App
             }
 
             var name = KeyToName(e.Key);
-            if (name is null) { e.Handled = true; return; }
+            if (name is null)
+            {
+                RecStatus.Text = "未识别的键: " + e.Key;
+                _svc.Logger.Info($"[REC] 未识别的键: {e.Key}");
+                e.Handled = true;
+                return;
+            }
 
             var mods = BuildMods();
             var action = new { type = "key_stroke", key = name, mods = mods.ToArray() };
@@ -285,6 +366,7 @@ namespace MiRemote.App
 
         protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
         {
+            UninstallRecHook();
             e.Cancel = true;
             Hide();
         }
