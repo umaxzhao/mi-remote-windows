@@ -1,386 +1,274 @@
 using System;
+using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
-using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Input;
 using MiRemote.Core;
+using RemoteBinding = MiRemote.Core.KeyBinding;
+using MessageBox = System.Windows.MessageBox;
 
-namespace MiRemote.App
+namespace MiRemote.App;
+
+public partial class MainWindow : Window
 {
-    public partial class MainWindow : Window
+    private readonly AppServices _svc;
+    private readonly RemoteDiagram _remote = new();
+    private readonly List<SlotDefinition> _slots = new();
+    private RemoteKey _selectedKey = RemoteKey.Ok;
+    private string _selectedProfile = "global";
+    private bool _loading;
+
+    private sealed record SlotDefinition(string Id, string Title, string Detail, string Icon, string? Gesture = null, int? Layer = null)
     {
-        private readonly AppServices _svc;
-        private string _selectedKey = "up";
-
-        private enum RecSlot { None, Tap, Hold, Double }
-        private RecSlot _recording = RecSlot.None;
-        private IntPtr _recHook = IntPtr.Zero;
-        private Win32.HookProc? _recHookProc;
-
-        [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vKey);
-
-        private static bool IsKeyDown(int vk) => (GetAsyncKeyState(vk) & 0x8000) != 0;
-
-        public MainWindow(AppServices svc)
-        {
-            InitializeComponent();
-            _svc = svc;
-
-            PauseCheck.IsChecked = _svc.Engine.IsSuspended;
-            PauseCheck.Checked += (_, _) => _svc.ToggleSuspended();
-            PauseCheck.Unchecked += (_, _) => _svc.ToggleSuspended();
-
-            StartEnabledCheck.IsChecked = _svc.Config.Settings.StartEnabled;
-
-            HoldMsBox.Text = _svc.Config.Settings.HoldMs.ToString();
-            DoubleMsBox.Text = _svc.Config.Settings.DoubleMs.ToString();
-            RepeatDelayBox.Text = _svc.Config.Settings.RepeatDelayMs.ToString();
-
-            foreach (var k in RemoteKeys.All)
-                KeyList.Items.Add(k.RawName() + "  " + k.DisplayName());
-            KeyList.SelectedIndex = 0;
-            KeyList.SelectionChanged += KeyList_SelectionChanged;
-
-            foreach (var p in Presets.All)
-                PresetList.Items.Add(p.DisplayName + "  [" + (p.BundleId ?? "global") + "]");
-            ConfigPathText.Text = "配置路径: " + _svc.ConfigStore.ConfigPath;
-
-            _svc.Logger.Line += line =>
-            {
-                Dispatcher.BeginInvoke(new Action(() =>
-                {
-                    LogTail.AppendText(line + Environment.NewLine);
-                    LogTail.ScrollToEnd();
-                    FullLog.AppendText(line + Environment.NewLine);
-                    FullLog.ScrollToEnd();
-                }));
-            };
-
-            NavList.SelectedIndex = 0;
-        }
-
-        private void NavList_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (NavList.SelectedItem is not ListBoxItem item) return;
-            var tag = item.Tag as string ?? "";
-            PageMapping.Visibility = tag == "mapping" ? Visibility.Visible : Visibility.Collapsed;
-            PageProfile.Visibility = tag == "profile" ? Visibility.Visible : Visibility.Collapsed;
-            PageVoice.Visibility = tag == "voice" ? Visibility.Visible : Visibility.Collapsed;
-            PageGeneral.Visibility = tag == "general" ? Visibility.Visible : Visibility.Collapsed;
-            PageLog.Visibility = tag == "log" ? Visibility.Visible : Visibility.Collapsed;
-        }
-
-        private void RemoteKey_Click(object sender, MouseButtonEventArgs e)
-        {
-            if (sender is not FrameworkElement fe) return;
-            var tag = fe.Tag as string;
-            if (string.IsNullOrEmpty(tag)) return;
-            var idx = -1;
-            for (int i = 0; i < RemoteKeys.All.Length; i++)
-                if (RemoteKeys.All[i].RawName() == tag) { idx = i; break; }
-            if (idx >= 0) KeyList.SelectedIndex = idx;
-        }
-
-        private void KeyList_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (KeyList.SelectedItem is null) return;
-            var raw = KeyList.SelectedItem.ToString()!.Split(new[] { ' ', ' ' }, StringSplitOptions.RemoveEmptyEntries)[0];
-            _selectedKey = raw;
-            CurrentKeyLabel.Text = raw;
-            var kb = _svc.Config.Profiles.TryGetValue("global", out var g) && g.TryGetValue(raw, out var b) ? b : null;
-            TapBox.Text = kb?.Tap?.ToJson() ?? "";
-            HoldBox.Text = kb?.Hold?.ToJson() ?? "";
-            DoubleBox.Text = kb?.Double?.ToJson() ?? "";
-        }
-
-        private void RecTap_Click(object sender, RoutedEventArgs e) => StartRecording(RecSlot.Tap);
-        private void RecHold_Click(object sender, RoutedEventArgs e) => StartRecording(RecSlot.Hold);
-        private void RecDouble_Click(object sender, RoutedEventArgs e) => StartRecording(RecSlot.Double);
-
-        private void StartRecording(RecSlot slot)
-        {
-            _recording = slot;
-            InstallRecHook();
-            RecStatus.Text = "请按下快捷键…（Esc 取消）";
-            RecTapBtn.Content = slot == RecSlot.Tap ? "● 录制中…" : "⏺ 录制";
-            RecHoldBtn.Content = slot == RecSlot.Hold ? "● 录制中…" : "⏺ 录制";
-            RecDoubleBtn.Content = slot == RecSlot.Double ? "● 录制中…" : "⏺ 录制";
-        }
-
-        private void InstallRecHook()
-        {
-            _recHookProc = RecHookCallback;
-            _recHook = Win32.SetWindowsHookEx(Win32.WH_KEYBOARD_LL, _recHookProc, IntPtr.Zero, 0);
-            if (_recHook == IntPtr.Zero)
-                _svc.Logger.Info("[REC] SetWindowsHookEx 失败: " + Marshal.GetLastWin32Error());
-            else
-                _svc.Logger.Info("[REC] 低级键盘钩子已安装");
-        }
-
-        private void UninstallRecHook()
-        {
-            if (_recHook != IntPtr.Zero)
-            {
-                Win32.UnhookWindowsHookEx(_recHook);
-                _recHook = IntPtr.Zero;
-            }
-            _recHookProc = null;
-        }
-
-        private IntPtr RecHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
-        {
-            try
-            {
-                // (diagnostic removed)
-            if (nCode == Win32.HC_ACTION && (wParam == (IntPtr)Win32.WM_KEYDOWN || wParam == (IntPtr)Win32.WM_SYSKEYDOWN))
-            {
-                var kb = Marshal.PtrToStructure<Win32.KBDLLHOOKSTRUCT>(lParam);
-                int vk = (int)kb.vkCode;
-
-                if (vk == 0x1B) // Escape 取消
-                {
-                    Dispatcher.BeginInvoke(new Action(CancelRecording));
-                    UninstallRecHook();
-                    return (IntPtr)1;
-                }
-
-                // 纯修饰键：不结束录制，放行
-                if (vk is 0xA0 or 0xA1 or 0xA2 or 0xA3 or 0xA4 or 0xA5 or 0x5B or 0x5C
-                    or 0x10 or 0x11 or 0x12)
-                {
-                    return Win32.CallNextHookEx(_recHook, nCode, wParam, lParam);
-                }
-
-                var wpfKey = KeyInterop.KeyFromVirtualKey(vk);
-                var name = KeyToName(wpfKey);
-                _svc.Logger.Info($"[REC] cb vk=0x{vk:X2} wpfKey={wpfKey} name={name ?? "<null>"}");
-                if (name is null)
-                {
-                    RecStatus.Text = "未识别的键: " + wpfKey;
-                    return (IntPtr)1;
-                }
-
-                var mods = BuildMods();
-                var action = new { type = "key_stroke", key = name, mods = mods.ToArray() };
-                var json = System.Text.Json.JsonSerializer.Serialize(action);
-                var slot = _recording;
-                _svc.Logger.Info($"[REC] captured {name} mods={string.Join(",", mods)} slot={slot}");
-                switch (slot)
-                {
-                    case RecSlot.Tap: TapBox.Text = json; break;
-                    case RecSlot.Hold: HoldBox.Text = json; break;
-                    case RecSlot.Double: DoubleBox.Text = json; break;
-                }
-                UninstallRecHook();
-                _recording = RecSlot.None;
-                RecStatus.Text = "已录制";
-                RecTapBtn.Content = "⏺ 录制";
-                RecHoldBtn.Content = "⏺ 录制";
-                RecDoubleBtn.Content = "⏺ 录制";
-                return (IntPtr)1; // 吞掉该按键，避免泄漏到前台
-            }
-            return Win32.CallNextHookEx(_recHook, nCode, wParam, lParam);
-            }
-            catch (Exception ex)
-            {
-                try { _svc.Logger.Info("[REC] hook exception: " + ex); } catch { }
-                return Win32.CallNextHookEx(_recHook, nCode, wParam, lParam);
-            }
-        }
-
-        private void StopRecording()
-        {
-            UninstallRecHook();
-            _recording = RecSlot.None;
-            RecStatus.Text = "已录制";
-            RecTapBtn.Content = "⏺ 录制";
-            RecHoldBtn.Content = "⏺ 录制";
-            RecDoubleBtn.Content = "⏺ 录制";
-        }
-
-        private void CancelRecording()
-        {
-            UninstallRecHook();
-            _recording = RecSlot.None;
-            RecStatus.Text = "已取消";
-            RecTapBtn.Content = "⏺ 录制";
-            RecHoldBtn.Content = "⏺ 录制";
-            RecDoubleBtn.Content = "⏺ 录制";
-        }
-
-        protected override void OnPreviewKeyDown(System.Windows.Input.KeyEventArgs e)
-        {
-            if (_recording == RecSlot.None) { base.OnPreviewKeyDown(e); return; }
-            _svc.Logger.Info($"[REC] PreviewKeyDown key={e.Key} recording={_recording}");
-            if (e.Key == Key.Escape) { CancelRecording(); e.Handled = true; return; }
-
-            // 纯修饰键按下时不结束录制
-            if (e.Key is Key.LeftCtrl or Key.RightCtrl or Key.LeftShift or Key.RightShift
-                or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin)
-            {
-                e.Handled = true;
-                return;
-            }
-
-            var name = KeyToName(e.Key);
-            if (name is null)
-            {
-                RecStatus.Text = "未识别的键: " + e.Key;
-                _svc.Logger.Info($"[REC] 未识别的键: {e.Key}");
-                e.Handled = true;
-                return;
-            }
-
-            var mods = BuildMods();
-            var action = new { type = "key_stroke", key = name, mods = mods.ToArray() };
-            var json = System.Text.Json.JsonSerializer.Serialize(action);
-
-            switch (_recording)
-            {
-                case RecSlot.Tap: TapBox.Text = json; break;
-                case RecSlot.Hold: HoldBox.Text = json; break;
-                case RecSlot.Double: DoubleBox.Text = json; break;
-            }
-            StopRecording();
-            e.Handled = true;
-        }
-
-        private System.Collections.Generic.List<string> BuildMods()
-        {
-            var mods = new System.Collections.Generic.List<string>();
-            if (IsKeyDown(0xA2)) mods.Add("left_ctrl");
-            else if (IsKeyDown(0xA3)) mods.Add("right_ctrl");
-            if (IsKeyDown(0xA0)) mods.Add("left_shift");
-            else if (IsKeyDown(0xA1)) mods.Add("right_shift");
-            if (IsKeyDown(0xA4)) mods.Add("left_alt");
-            else if (IsKeyDown(0xA5)) mods.Add("right_alt");
-            if (IsKeyDown(0x5B)) mods.Add("left_win");
-            else if (IsKeyDown(0x5C)) mods.Add("right_win");
-            // 兜底：Keyboard.Modifiers 有但具体左右未识别时
-            if (mods.Count == 0)
-            {
-                if ((Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control) mods.Add("left_ctrl");
-                if ((Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift) mods.Add("left_shift");
-                if ((Keyboard.Modifiers & ModifierKeys.Alt) == ModifierKeys.Alt) mods.Add("left_alt");
-            }
-            return mods;
-        }
-
-        private static string? KeyToName(Key key)
-        {
-            if (key >= Key.A && key <= Key.Z) return key.ToString().ToLowerInvariant();
-            if (key >= Key.D0 && key <= Key.D9) return ((char)('0' + (key - Key.D0))).ToString();
-            if (key >= Key.F1 && key <= Key.F24) return "f" + (key - Key.F1 + 1);
-            return key switch
-            {
-                Key.Return => "return",
-                Key.Tab => "tab",
-                Key.Space => "space",
-                Key.Back => "delete",
-                Key.Delete => "forward_delete",
-                Key.Escape => null,
-                Key.Up => "up_arrow",
-                Key.Down => "down_arrow",
-                Key.Left => "left_arrow",
-                Key.Right => "right_arrow",
-                Key.Home => "home",
-                Key.End => "end",
-                Key.PageUp => "page_up",
-                Key.PageDown => "page_down",
-                Key.Insert => "insert",
-                Key.PrintScreen => "print_screen",
-                Key.OemOpenBrackets => "left_bracket",
-                Key.OemCloseBrackets => "right_bracket",
-                Key.OemMinus => "minus",
-                Key.OemPlus => "equal",
-                Key.OemComma => "comma",
-                Key.OemPeriod => "period",
-                Key.OemQuestion => "slash",
-                Key.OemSemicolon => "semicolon",
-                Key.OemQuotes => "quote",
-                Key.OemBackslash => "backslash",
-                Key.OemTilde => "grave",
-                _ => null,
-            };
-        }
-
-        private void Save_Click(object sender, RoutedEventArgs e)
-        {
-            if (int.TryParse(HoldMsBox.Text, out var h)) _svc.Config.Settings.HoldMs = h;
-            if (int.TryParse(DoubleMsBox.Text, out var d)) _svc.Config.Settings.DoubleMs = d;
-            if (int.TryParse(RepeatDelayBox.Text, out var r)) _svc.Config.Settings.RepeatDelayMs = r;
-            _svc.Config.Settings.StartEnabled = StartEnabledCheck.IsChecked == true;
-            _svc.Config.Settings.VoiceFallback = VoiceFallbackBox.SelectedIndex == 0 ? "dictation" : "none";
-            _svc.ApplyConfig(_svc.Config);
-            System.Windows.MessageBox.Show("已保存", "MiRemote");
-        }
-
-        private void SaveKey_Click(object sender, RoutedEventArgs e)
-        {
-            if (!_svc.Config.Profiles.TryGetValue("global", out var g))
-            {
-                g = new System.Collections.Generic.Dictionary<string, MiRemote.Core.KeyBinding>();
-                _svc.Config.Profiles["global"] = g;
-            }
-            var kb = g.TryGetValue(_selectedKey, out var existing) ? existing : new MiRemote.Core.KeyBinding();
-            kb.Tap = ParseAction(TapBox.Text);
-            kb.Hold = ParseAction(HoldBox.Text);
-            kb.Double = ParseAction(DoubleBox.Text);
-            g[_selectedKey] = kb;
-            _svc.ApplyConfig(_svc.Config);
-        }
-
-        private static MAction? ParseAction(string text)
-        {
-            text = text.Trim();
-            if (string.IsNullOrEmpty(text)) return null;
-            try { return ConfigJson.DeserializeAction(text); } catch { return null; }
-        }
-
-        private void ApplyPreset_Click(object sender, RoutedEventArgs e) => ApplyPreset(false);
-        private void ApplyPresetForce_Click(object sender, RoutedEventArgs e) => ApplyPreset(true);
-
-        private void ApplyPreset(bool force)
-        {
-            int idx = PresetList.SelectedIndex;
-            if (idx < 0 || idx >= Presets.All.Count) return;
-            var preset = Presets.All[idx];
-            var cfg = _svc.Config;
-            Presets.Apply(preset, ref cfg, force);
-            _svc.ApplyConfig(cfg);
-        }
-
-        private void ExportConfig_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                var dlg = new Microsoft.Win32.SaveFileDialog { FileName = "config.json", Filter = "JSON|*.json" };
-                if (dlg.ShowDialog() == true)
-                {
-                    File.WriteAllText(dlg.FileName, ConfigJson.Serialize(_svc.Config));
-                    System.Windows.MessageBox.Show("已导出", "MiRemote");
-                }
-            }
-            catch (Exception ex) { System.Windows.MessageBox.Show(ex.Message); }
-        }
-
-        private void ReloadConfig_Click(object sender, RoutedEventArgs e)
-        {
-            var cfg = _svc.ConfigStore.Load();
-            _svc.ApplyConfig(cfg);
-            HoldMsBox.Text = cfg.Settings.HoldMs.ToString();
-            DoubleMsBox.Text = cfg.Settings.DoubleMs.ToString();
-            RepeatDelayBox.Text = cfg.Settings.RepeatDelayMs.ToString();
-            StartEnabledCheck.IsChecked = cfg.Settings.StartEnabled;
-        }
-
-        protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
-        {
-            UninstallRecHook();
-            e.Cancel = true;
-            Hide();
-        }
+        public ActionSlotRow? Row { get; set; }
     }
+
+    public MainWindow(AppServices svc)
+    {
+        InitializeComponent();
+        _svc = svc;
+        RemoteHost.Content = _remote;
+        _remote.Selected += SelectKey;
+        _remote.Select(_selectedKey);
+        _svc.RawInput.ButtonPressed += RemoteButtonPressed;
+        Closed += (_, _) => _svc.RawInput.ButtonPressed -= RemoteButtonPressed;
+        NavList.SelectedIndex = 0;
+        PauseCheck.IsChecked = _svc.Engine.IsSuspended;
+        PauseCheck.Checked += (_, _) => _svc.Engine.SetSuspended(true);
+        PauseCheck.Unchecked += (_, _) => _svc.Engine.SetSuspended(false);
+        RefreshProfiles();
+        RefreshSettings();
+        foreach (var p in Presets.All) PresetList.Items.Add(p.DisplayName + "  [" + (p.BundleId ?? "global") + "]");
+        ConfigPathText.Text = "配置文件：" + _svc.ConfigStore.ConfigPath;
+        SelectKey(RemoteKey.Ok);
+    }
+
+    private void RemoteButtonPressed(ButtonEvent e)
+    {
+        if (!e.IsDown) return;
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            RemoteStatus.Text = "已收到遥控器按键 · " + e.Key.DisplayName();
+            DeviceStatus.Text = "已收到遥控器输入。此状态仅表示本次运行期间收到过按键事件。";
+        }));
+    }
+
+    private void RefreshSettings()
+    {
+        _loading = true;
+        StartEnabledCheck.IsChecked = _svc.Config.Settings.StartEnabled;
+        HoldMsBox.Text = _svc.Config.Settings.HoldMs.ToString();
+        DoubleMsBox.Text = _svc.Config.Settings.DoubleMs.ToString();
+        RepeatDelayBox.Text = _svc.Config.Settings.RepeatDelayMs.ToString();
+        VoiceFallbackBox.SelectedIndex = _svc.Config.Settings.VoiceFallback == "none" ? 1 : 0;
+        RemoteStatus.Text = "等待遥控器连接";
+        DeviceStatus.Text = "等待遥控器连接。这里只显示实际收到的输入，不表示已检测设备连接。";
+        _loading = false;
+    }
+
+    private void RefreshProfiles()
+    {
+        _loading = true;
+        var names = _svc.Config.Profiles.Keys.Where(k => k != "global").OrderBy(k => k).ToList();
+        ProfileSelector.Items.Clear();
+        ProfileSelector.Items.Add("global（所有应用）");
+        foreach (var name in names) ProfileSelector.Items.Add(name);
+        if (_selectedProfile != "global" && !_svc.Config.Profiles.ContainsKey(_selectedProfile)) _selectedProfile = "global";
+        ProfileSelector.SelectedIndex = _selectedProfile == "global" ? 0 : names.IndexOf(_selectedProfile) + 1;
+        _loading = false;
+    }
+
+    private void ProfileSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading) return;
+        _selectedProfile = ProfileSelector.SelectedIndex <= 0 ? "global" : ProfileSelector.SelectedItem?.ToString() ?? "global";
+        RebuildRows();
+    }
+
+    private void SelectKey(RemoteKey key)
+    {
+        _selectedKey = key;
+        _remote.Select(key);
+        CurrentKeyLabel.Text = key == RemoteKey.Ok ? "确认键（方向环中心）" : key.DisplayName();
+        KeyBadge.Text = key == RemoteKey.Ok ? "OK" : key.DisplayName();
+        var usage = RemoteKeys.UsageMap.FirstOrDefault(x => x.Value == key).Key;
+        if (usage != 0) UsageLabel.Text = $"HID usage 0x{usage:X2}";
+        else
+        {
+            var consumerUsage = RemoteKeys.ConsumerUsageMap.FirstOrDefault(x => x.Value == key).Key;
+            UsageLabel.Text = consumerUsage == 0 ? "HID usage：未知" : $"HID usage 0x{consumerUsage:X2} · 消费者页";
+        }
+        RebuildRows();
+    }
+
+    private void RebuildRows()
+    {
+        _slots.Clear();
+        TriggerRows.Children.Clear(); GestureRows.Children.Clear(); LayerRows.Children.Clear();
+        GestureSection.Visibility = _selectedKey == RemoteKey.Ok ? Visibility.Visible : Visibility.Collapsed;
+        Add(TriggerRows, new SlotDefinition("tap", "短按", "松开时立即触发", "✓"));
+        Add(TriggerRows, new SlotDefinition("hold", "长按", $"超过 {_svc.Config.Settings.HoldMs} ms 触发", "◷"));
+        Add(TriggerRows, new SlotDefinition("double", "双击", $"{_svc.Config.Settings.DoubleMs} ms 窗口内连接两次", "⋯"));
+        if (_selectedKey == RemoteKey.Ok)
+            foreach (var d in new[] { ("up", "上", "↑"), ("down", "下", "↓"), ("left", "左", "←"), ("right", "右", "→") })
+                Add(GestureRows, new SlotDefinition("gesture_" + d.Item1, "OK + " + d.Item2, "按住确认键时触发", d.Item3, d.Item1));
+        for (int layer = 1; layer <= 3; layer++)
+            Add(LayerRows, new SlotDefinition("layer_" + layer, ActionLabels.Mode(layer), "功能模式 " + layer + " · 替代短按", "◈", Layer: layer));
+    }
+
+    private void Add(System.Windows.Controls.Panel panel, SlotDefinition slot)
+    {
+        var row = new ActionSlotRow(slot.Id, slot.Title, slot.Detail, slot.Icon);
+        row.Clicked += (_, _) => OpenActionMenu(slot);
+        slot.Row = row;
+        _slots.Add(slot);
+        panel.Children.Add(row);
+        UpdateRow(slot);
+    }
+
+    private void UpdateRow(SlotDefinition slot)
+    {
+        var action = ReadSlot(slot, out bool inherited);
+        slot.Row?.SetAction(inherited ? "继承全局 · " + ActionLabels.Describe(action) : ActionLabels.Describe(action));
+    }
+
+    private MAction? ReadSlot(SlotDefinition slot, out bool inherited)
+    {
+        inherited = false;
+        RemoteBinding? binding = null;
+        if (_selectedProfile != "global" && _svc.Config.Profiles.TryGetValue(_selectedProfile, out var overlay))
+            overlay.TryGetValue(_selectedKey.RawName(), out binding);
+        if (binding != null && TryReadRaw(binding, slot, out var own)) return own;
+        if (_selectedProfile != "global") inherited = true;
+        if (_svc.Config.Profiles.TryGetValue("global", out var global)) global.TryGetValue(_selectedKey.RawName(), out binding); else binding = null;
+        return binding != null && TryReadRaw(binding, slot, out var action) ? action : null;
+    }
+
+    private static bool TryReadRaw(RemoteBinding binding, SlotDefinition slot, out MAction? action)
+    {
+        action = null;
+        if (slot.Gesture != null) return binding.Gesture != null && binding.Gesture.TryGetValue(slot.Gesture, out action);
+        if (slot.Layer.HasValue) return binding.Layers != null && binding.Layers.TryGetValue(slot.Layer.Value.ToString(), out action);
+        action = slot.Id switch { "tap" => binding.Tap, "hold" => binding.Hold, "double" => binding.Double, _ => null };
+        // Missing/null overlay slots inherit; explicit NoneAction still overrides global.
+        return action != null;
+    }
+
+    private void OpenActionMenu(SlotDefinition slot)
+    {
+        var current = ReadSlot(slot, out _);
+        ActionMenus.Open(slot.Row!.Selector, this, _selectedProfile == "global", action => SetAction(slot, action), () => SetAction(slot, null), () => RecordShortcut(slot), () => EditJson(slot, current));
+    }
+
+    private void RecordShortcut(SlotDefinition slot)
+    {
+        var wasSuspended = _svc.Engine.IsSuspended;
+        _svc.Engine.SetSuspended(true);
+        try
+        {
+            var dialog = new ShortcutRecorderWindow { Owner = this };
+            if (dialog.ShowDialog() == true && dialog.Result is not null) SetAction(slot, dialog.Result);
+        }
+        finally { _svc.Engine.SetSuspended(wasSuspended); }
+    }
+
+    private void EditJson(SlotDefinition slot, MAction? current)
+    {
+        var text = ActionInputDialog.Ask(this, "高级动作 JSON", "支持的动作 JSON。无效 JSON 不会保存。", current?.ToJson() ?? "", multiline: true);
+        if (text == null) return;
+        try { SetAction(slot, ConfigJson.DeserializeAction(text)); }
+        catch (Exception ex) { MessageBox.Show(this, "动作无效：" + ex.Message, "MiRemote", MessageBoxButton.OK, MessageBoxImage.Warning); }
+    }
+
+    private void SetAction(SlotDefinition slot, MAction? action)
+    {
+        if (!_svc.Config.Profiles.TryGetValue(_selectedProfile, out var profile))
+        {
+            profile = new Dictionary<string, RemoteBinding>();
+            _svc.Config.Profiles[_selectedProfile] = profile;
+        }
+        profile.TryGetValue(_selectedKey.RawName(), out var binding);
+        if (action == null && _selectedProfile != "global" && binding == null) { UpdateRow(slot); return; }
+        binding ??= new RemoteBinding();
+        if (slot.Gesture != null)
+        {
+            if (action == null) { binding.Gesture?.Remove(slot.Gesture); if (binding.Gesture?.Count == 0) binding.Gesture = null; }
+            else (binding.Gesture ??= new Dictionary<string, MAction>())[slot.Gesture] = action;
+        }
+        else if (slot.Layer.HasValue)
+        {
+            if (action == null) { binding.Layers?.Remove(slot.Layer.Value.ToString()); if (binding.Layers?.Count == 0) binding.Layers = null; }
+            else (binding.Layers ??= new Dictionary<string, MAction>())[slot.Layer.Value.ToString()] = action;
+        }
+        else if (slot.Id == "tap") binding.Tap = action;
+        else if (slot.Id == "hold") binding.Hold = action;
+        else binding.Double = action;
+        if (_selectedProfile != "global" && binding.Tap == null && binding.Hold == null && binding.Double == null && binding.Gesture == null && binding.Layers == null)
+            profile.Remove(_selectedKey.RawName());
+        else profile[_selectedKey.RawName()] = binding;
+        SaveChanges($"{slot.Title} · {ActionLabels.Describe(action)}");
+    }
+
+    private void SaveChanges(string message)
+    {
+        try
+        {
+            _svc.ApplyConfig(_svc.Config);
+            SaveStatus.Text = message + " · 已自动保存";
+            foreach (var slot in _slots) UpdateRow(slot);
+        }
+        catch (Exception ex) { SaveStatus.Text = "保存失败：" + ex.Message; MessageBox.Show(this, "保存失败：" + ex.Message, "MiRemote"); }
+    }
+
+    private void NavList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (NavList.SelectedItem is not ListBoxItem item) return;
+        var tag = item.Tag as string;
+        PageMapping.Visibility = tag == "mapping" ? Visibility.Visible : Visibility.Collapsed;
+        PageProfile.Visibility = tag == "profile" ? Visibility.Visible : Visibility.Collapsed;
+        PageVoice.Visibility = tag == "voice" ? Visibility.Visible : Visibility.Collapsed;
+        PageGeneral.Visibility = tag == "general" ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void AddProfile_Click(object sender, RoutedEventArgs e)
+    {
+        var name = ActionInputDialog.Ask(this, "添加应用 Profile", "输入进程名（例如 code，不包含 .exe）。仅修改过的槽位会覆盖全局设置。");
+        if (name == null) return;
+        name = Path.GetFileNameWithoutExtension(name.Trim()).ToLowerInvariant();
+        if (name == "global" || string.IsNullOrWhiteSpace(name) || name.Any(c => char.IsWhiteSpace(c) || c == '/' || c == '\\')) { MessageBox.Show(this, "请输入有效的进程名。", "MiRemote"); return; }
+        if (!_svc.Config.Profiles.ContainsKey(name)) { _svc.Config.Profiles[name] = new Dictionary<string, RemoteBinding>(); _svc.ApplyConfig(_svc.Config); }
+        _selectedProfile = name; RefreshProfiles(); RebuildRows();
+    }
+
+    private void ApplyPreset_Click(object sender, RoutedEventArgs e) => ApplyPreset(false);
+    private void ApplyPresetForce_Click(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show(this, "强制覆盖会替换预设涉及的槽位，确定继续？", "应用预设", MessageBoxButton.OKCancel, MessageBoxImage.Warning) == MessageBoxResult.OK) ApplyPreset(true);
+    }
+    private void ApplyPreset(bool force)
+    {
+        int idx = PresetList.SelectedIndex;
+        if (idx < 0 || idx >= Presets.All.Count) { MessageBox.Show(this, "请先选择一个预设。", "MiRemote"); return; }
+        var cfg = _svc.Config; Presets.Apply(Presets.All[idx], ref cfg, force); _svc.ApplyConfig(cfg); RefreshProfiles(); RebuildRows();
+    }
+    private void ExportConfig_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.SaveFileDialog { FileName = "config.json", Filter = "JSON|*.json" };
+        if (dlg.ShowDialog(this) != true) return;
+        try { File.WriteAllText(dlg.FileName, ConfigJson.Serialize(_svc.Config)); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "导出失败"); }
+    }
+    private void ReloadConfig_Click(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show(this, "放弃尚未保存的通用设置并从磁盘重新加载？", "重新加载", MessageBoxButton.OKCancel) != MessageBoxResult.OK) return;
+        try { _svc.ApplyConfig(_svc.ConfigStore.Load()); RefreshSettings(); RefreshProfiles(); RebuildRows(); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "重新加载失败"); }
+    }
+    private void SaveVoice_Click(object sender, RoutedEventArgs e) { _svc.Config.Settings.VoiceFallback = VoiceFallbackBox.SelectedIndex == 1 ? "none" : "dictation"; _svc.ApplyConfig(_svc.Config); }
+    private void Save_Click(object sender, RoutedEventArgs e)
+    {
+        if (!int.TryParse(HoldMsBox.Text, out int h) || h < 50 || !int.TryParse(DoubleMsBox.Text, out int d) || d < 50 || !int.TryParse(RepeatDelayBox.Text, out int r) || r < -1) { MessageBox.Show(this, "阈值必须是有效整数，长按和双击阈值至少 50 ms。", "MiRemote"); return; }
+        _svc.Config.Settings.HoldMs = h; _svc.Config.Settings.DoubleMs = d; _svc.Config.Settings.RepeatDelayMs = r; _svc.Config.Settings.StartEnabled = StartEnabledCheck.IsChecked == true; _svc.ApplyConfig(_svc.Config); RebuildRows();
+    }
+    protected override void OnClosing(CancelEventArgs e) { e.Cancel = true; Hide(); }
 }
