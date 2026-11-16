@@ -70,6 +70,17 @@ namespace MiRemote.App
             PageLog.Visibility = tag == "log" ? Visibility.Visible : Visibility.Collapsed;
         }
 
+        private void RemoteKey_Click(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is not FrameworkElement fe) return;
+            var tag = fe.Tag as string;
+            if (string.IsNullOrEmpty(tag)) return;
+            var idx = -1;
+            for (int i = 0; i < RemoteKeys.All.Length; i++)
+                if (RemoteKeys.All[i].RawName() == tag) { idx = i; break; }
+            if (idx >= 0) KeyList.SelectedIndex = idx;
+        }
+
         private void KeyList_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (KeyList.SelectedItem is null) return;
