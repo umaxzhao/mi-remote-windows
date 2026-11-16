@@ -142,8 +142,20 @@ namespace MiRemote.Core
         }
 
         /// <summary>设备名里用于匹配的片段（Raw Input 的 RIDI_DEVICENAME 形如 \?\HID#VID_2717&PID_32B8...）。</summary>
-        public static bool Matches(string deviceName) =>
-            deviceName.Contains($"VID_{_vendorId:X4}", StringComparison.OrdinalIgnoreCase) &&
-            deviceName.Contains($"PID_{_productId:X4}", StringComparison.OrdinalIgnoreCase);
+        public static bool Matches(string deviceName)
+        {
+            // USB HID: VID_2717&PID_32B8；蓝牙 HID: VID&012717_PID&32b8。统一取十六进制末 4 位比较。
+            var vid = System.Text.RegularExpressions.Regex.Match(deviceName, @"VID[_&]([0-9A-Fa-f]+)");
+            var pid = System.Text.RegularExpressions.Regex.Match(deviceName, @"PID[_&]([0-9A-Fa-f]+)");
+            return vid.Success && pid.Success
+                && HexLast4(vid.Groups[1].Value) == _vendorId
+                && HexLast4(pid.Groups[1].Value) == _productId;
+        }
+
+        private static int HexLast4(string hex)
+        {
+            var s = hex.Length > 4 ? hex.Substring(hex.Length - 4) : hex;
+            return Convert.ToInt32(s, 16);
+        }
     }
 }

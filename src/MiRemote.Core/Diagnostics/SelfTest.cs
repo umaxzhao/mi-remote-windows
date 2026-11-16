@@ -182,7 +182,8 @@ namespace MiRemote.Core
                 var runner = new RecordingRunner();
                 var engine = new MappingEngine(cfg, runner, null, clock);
                 engine.Handle(new ButtonEvent(RemoteKey.Voice, true, 0));
-                Expect(runner.VoiceBegins == 1, "voice key down starts voice immediately");
+                engine.Handle(new ButtonEvent(RemoteKey.Voice, true, 0));
+                Expect(runner.VoiceBegins == 1, "voice key down starts voice once without repeats");
                 clock.Advance(500);
                 engine.Handle(new ButtonEvent(RemoteKey.Voice, false, 0));
                 Expect(runner.VoiceEnds == 1, "voice key up ends voice");

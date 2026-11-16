@@ -10,9 +10,16 @@
     <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>MiRemote</RootNamespace>
     <AssemblyName>MiRemote</AssemblyName>
-    <ApplicationIcon></ApplicationIcon>
+    <ApplicationIcon>Assets\icon.ico</ApplicationIcon>
     <StartupObject>MiRemote.App.Program</StartupObject>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\icon.png" />
+    <Content Include="Assets\icon.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\MiRemote.Core\MiRemote.Core.csproj" />

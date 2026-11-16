@@ -157,7 +157,7 @@ namespace MiRemote.App
         {
             _tray = new NotifyIcon
             {
-                Icon = System.Drawing.SystemIcons.Application,
+                Icon = new System.Drawing.Icon(Path.Combine(AppContext.BaseDirectory, "Assets", "icon.ico")),
                 Text = "MiRemote",
                 Visible = true,
             };

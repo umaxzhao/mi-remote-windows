@@ -126,6 +126,8 @@ namespace MiRemote.Core
         private const int EscapeHoldMs = 1500;
         private int _escapeSeq;
 
+        private bool _voiceActive;
+
         /// <summary>逃生触发时的 UI 侧钩子（关闭所有浮层/HUD）。</summary>
         public Action? OnEscapeHatch { get; set; }
 
@@ -241,6 +243,7 @@ namespace MiRemote.Core
 
         private void ResetInputStateCore(string reason)
         {
+            _voiceActive = false;
             (_runner as IVoiceRunner)?.VoiceEnd();
             foreach (var key in new List<RemoteKey>(_states.Keys))
             {
@@ -308,7 +311,14 @@ namespace MiRemote.Core
                 if (e.Key == RemoteKey.Voice && _runner is IVoiceRunner voice
                     && BindingFor(RemoteKey.Voice)?.Tap is VoiceAction)
                 {
-                    if (e.IsDown) voice.VoiceBegin(); else voice.VoiceEnd();
+                    if (e.IsDown)
+                    {
+                        if (!_voiceActive) { _voiceActive = true; voice.VoiceBegin(); }
+                    }
+                    else
+                    {
+                        if (_voiceActive) { _voiceActive = false; voice.VoiceEnd(); }
+                    }
                     return;
                 }
 

@@ -14,12 +14,29 @@ namespace MiRemote.Core
         private Thread? _thread;
         private uint _threadId;
         private bool _running;
+        private bool _seenRemote;
 
         private readonly Dictionary<IntPtr, string> _deviceNames = new();
         private readonly Dictionary<string, byte[]> _prevReport = new();
 
         public event Action<ButtonEvent>? ButtonPressed;
         public event Action<string>? Log;
+
+        /// <summary>遥控器被 Windows 识别为标准键盘时，虚拟键码 → 遥控键。语音键 = F5。</summary>
+        private static readonly Dictionary<ushort, RemoteKey> VkMap = new()
+        {
+            [0x74] = RemoteKey.Voice,    // F5（遥控器语音键 usage 0x3E）
+            [0x0D] = RemoteKey.Ok,
+            [0x26] = RemoteKey.Up,
+            [0x28] = RemoteKey.Down,
+            [0x25] = RemoteKey.Left,
+            [0x27] = RemoteKey.Right,
+            [0x24] = RemoteKey.Home,
+            [0x5D] = RemoteKey.Menu,
+            [0xAF] = RemoteKey.VolUp,
+            [0xAE] = RemoteKey.VolDown,
+            [0xC0] = RemoteKey.Tv,
+        };
 
         public RawInputListener(Logger logger) => _logger = logger;
 
@@ -122,7 +139,7 @@ namespace MiRemote.Core
                 if (Win32.GetRawInputData(hRawInput, Win32.RID_INPUT, buf, ref size, (uint)Marshal.SizeOf<Win32.RAWINPUTHEADER>()) != size) return;
 
                 uint dwType = (uint)Marshal.ReadInt32(buf, 0);
-                if (dwType != Win32.RIM_TYPEHID) return;
+                if (dwType != Win32.RIM_TYPEHID && dwType != Win32.RIM_TYPEKEYBOARD) return;
 
                 IntPtr hDevice = Marshal.ReadIntPtr(buf, 8);
                 if (!_deviceNames.TryGetValue(hDevice, out var name))
@@ -145,7 +162,26 @@ namespace MiRemote.Core
 
                 if (!RemoteIdentity.Matches(name ?? "")) return;
 
+                if (!_seenRemote)
+                {
+                    _seenRemote = true;
+                    LogMsg("已检测到遥控器设备");
+                }
+
                 int off = Marshal.SizeOf<Win32.RAWINPUTHEADER>();
+                if (dwType == Win32.RIM_TYPEKEYBOARD)
+                {
+                    // RAWKEYBOARD：MakeCode(0) Flags(2) Reserved(4) VKey(6) Message(8) Extra(12)
+                    ushort vkey = (ushort)Marshal.ReadInt16(buf, off + 6);
+                    ushort flags = (ushort)Marshal.ReadInt16(buf, off + 2);
+                    bool down = (flags & 0x0001) == 0;   // RI_KEY_BREAK=1
+                    if (VkMap.TryGetValue(vkey, out var rk))
+                        Emit(rk, down);
+                    else
+                        LogMsg($"遥控器未识别的虚拟键 vk=0x{vkey:X2} down={down}");
+                    return;
+                }
+
                 uint sizeHid = (uint)Marshal.ReadInt32(buf, off);
                 uint count = (uint)Marshal.ReadInt32(buf, off + 4);
                 if (sizeHid == 0 || count == 0) return;
@@ -269,9 +305,16 @@ namespace MiRemote.Core
             _prevReport[key] = snapshot;
         }
 
+        private readonly Dictionary<RemoteKey, (bool Down, long Ms)> _lastEvents = new();
+
         private void Emit(RemoteKey rk, bool down)
         {
-            var ev = new ButtonEvent(rk, down, Environment.TickCount64);
+            long now = Environment.TickCount64;
+            if (_lastEvents.TryGetValue(rk, out var last) && last.Down == down && now - last.Ms < 15)
+                return;   // 同一事件经键盘/HID 双通道重复上报
+            _lastEvents[rk] = (down, now);
+            LogMsg($"HID {rk.RawName()} {(down ? "down" : "up")}");
+            var ev = new ButtonEvent(rk, down, now);
             try { ButtonPressed?.Invoke(ev); }
             catch (Exception ex) { _logger.Warn($"ButtonPressed 回调异常: {ex.Message}"); }
         }
