@@ -321,8 +321,11 @@ namespace MiRemote.Core
 
         private void LogMsg(string msg)
         {
-            _logger.Info(msg);
-            try { Log?.Invoke(msg); } catch { }
+            if (Log is not null)
+            {
+                try { Log.Invoke(msg); } catch { }
+            }
+            else _logger.Info(msg);
         }
 
         public void Dispose() => Stop();

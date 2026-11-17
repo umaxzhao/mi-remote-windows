@@ -65,6 +65,7 @@ public partial class MainWindow : Window
         VoiceFallbackBox.SelectedIndex = _svc.Config.Settings.VoiceFallback switch { "none" => 2, "dictation" => 1, _ => 0 };
         VoiceKeyBox.Text = _svc.Config.Settings.VoiceTriggerKey;
         VoiceModeBox.SelectedIndex = _svc.Config.Settings.VoiceTriggerMode == "tap" ? 1 : 0;
+        VoiceDriverStatus.Text = _svc.Runner.VoiceDriverStatus + "。豆包会过滤普通模拟按键，建议安装驱动。";
         RemoteStatus.Text = "等待遥控器连接";
         DeviceStatus.Text = "等待遥控器连接。这里只显示实际收到的输入，不表示已检测设备连接。";
         _loading = false;
@@ -266,6 +267,22 @@ public partial class MainWindow : Window
         if (MessageBox.Show(this, "放弃尚未保存的通用设置并从磁盘重新加载？", "重新加载", MessageBoxButton.OKCancel) != MessageBoxResult.OK) return;
         try { _svc.ApplyConfig(_svc.ConfigStore.Load()); RefreshSettings(); RefreshProfiles(); RebuildRows(); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "重新加载失败"); }
     }
+    private void InstallDriver_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var script = Path.Combine(AppContext.BaseDirectory, "scripts", "install-driver.ps1");
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{script}\"",
+                Verb = "runas",
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex) { System.Windows.MessageBox.Show(this, "驱动安装已取消或失败：" + ex.Message, "MiRemote"); }
+    }
+
     private void SaveVoice_Click(object sender, RoutedEventArgs e)
     {
         _svc.Config.Settings.VoiceFallback = VoiceFallbackBox.SelectedIndex switch { 1 => "dictation", 2 => "none", _ => "doubao" };

@@ -58,6 +58,7 @@ namespace MiRemote.Core
 
         [DllImport("user32.dll")] public static extern short GetKeyState(int nVirtKey);
         [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vKey);
+        [DllImport("user32.dll")] public static extern uint MapVirtualKey(uint uCode, uint uMapType);
 
         // ---- 窗口 / 桌面 ----
         public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);

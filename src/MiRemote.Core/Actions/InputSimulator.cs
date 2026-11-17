@@ -69,23 +69,31 @@ namespace MiRemote.Core
         private static bool IsExtended(ushort vk) =>
             vk is 0xA2 or 0xA3 or 0xA4 or 0xA5 or 0x5B or 0x5C or 0x2E or 0x2D or 0x24 or 0x23 or 0x21 or 0x22 or 0x26 or 0x28 or 0x25 or 0x27 or 0x2C or 0x13;
 
-        private static void KeyEvent(ushort vk, bool down)
+        private static void KeyEvent(ushort vk, bool down, bool scanCode = false)
         {
             uint flags = down ? 0 : Win32.KEYEVENTF_KEYUP;
             if (IsExtended(vk)) flags |= Win32.KEYEVENTF_EXTENDEDKEY;
+            ushort scan = 0;
+            // 扫描码注入也必须携带扩展键标志；左 Win 与 Ctrl 的修饰状态
+            // 依赖该标志。缺省时系统把它们归一成普通 Ctrl，豆包无法识别组合。
+            if (scanCode)
+            {
+                flags |= Win32.KEYEVENTF_SCANCODE | Win32.KEYEVENTF_EXTENDEDKEY;
+                scan = (ushort)Win32.MapVirtualKey(vk, 0);
+            }
             var input = new Win32.INPUT
             {
                 type = Win32.INPUT_KEYBOARD,
                 u = new Win32.INPUTUNION
                 {
-                    ki = new Win32.KEYBDINPUT { wVk = vk, wScan = 0, dwFlags = flags, time = 0, dwExtraInfo = IntPtr.Zero }
+                    ki = new Win32.KEYBDINPUT { wVk = scanCode ? (ushort)0 : vk, wScan = scan, dwFlags = flags, time = 0, dwExtraInfo = IntPtr.Zero }
                 }
             };
             Win32.SendInput(1, new[] { input }, Marshal.SizeOf<Win32.INPUT>());
         }
 
-        public static void KeyDown(ushort vk) => KeyEvent(vk, true);
-        public static void KeyUp(ushort vk) => KeyEvent(vk, false);
+        public static void KeyDown(ushort vk, bool scanCode = false) => KeyEvent(vk, true, scanCode);
+        public static void KeyUp(ushort vk, bool scanCode = false) => KeyEvent(vk, false, scanCode);
 
         public static void TapKey(ushort vk)
         {

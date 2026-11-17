@@ -67,7 +67,12 @@ namespace MiRemote.Core
         private readonly Logger _logger;
         private readonly AppMru _mru;
         private readonly System.Collections.Generic.List<ushort> _voiceKeys = new();
+        private readonly InterceptionKeyboard _driverKeyboard = new();
         private bool _voiceHeld;
+        private bool _voiceUsedDriver;
+
+        public string VoiceDriverStatus => _driverKeyboard.Status;
+        public bool UseDriverVoice { get; set; } = true;
 
         public string VoiceFallback { get; set; } = "doubao";
         public string VoiceTriggerKey { get; set; } = "right_alt";
@@ -283,12 +288,26 @@ namespace MiRemote.Core
             }
             if (_voiceKeys.Count == 0) return;
 
-            foreach (var vk in _voiceKeys) InputSimulator.KeyDown(vk);
+            _voiceUsedDriver = UseDriverVoice && _driverKeyboard.TryOpen();
+            if (_voiceUsedDriver)
+            {
+                _driverKeyboard.SendChord(VoiceTriggerKey, down: true);
+                _voiceKeys.Clear();
+                _logger.Info($"voice → {VoiceTriggerKey} (driver)");
+                _voiceHeld = true;
+                return;
+            }
+
+            foreach (var vk in _voiceKeys)
+            {
+                InputSimulator.KeyDown(vk, scanCode: true);
+                System.Threading.Thread.Sleep(15);
+            }
             _logger.Info($"voice → {VoiceTriggerKey} ({(VoiceTriggerMode == "tap" ? "tap" : "hold")})");
 
             if (VoiceTriggerMode == "tap")
             {
-                for (int i = _voiceKeys.Count - 1; i >= 0; i--) InputSimulator.KeyUp(_voiceKeys[i]);
+                for (int i = _voiceKeys.Count - 1; i >= 0; i--) InputSimulator.KeyUp(_voiceKeys[i], scanCode: true);
                 _voiceKeys.Clear();
                 return;
             }
@@ -299,7 +318,15 @@ namespace MiRemote.Core
         public void VoiceEnd()
         {
             if (!_voiceHeld) return;
-            for (int i = _voiceKeys.Count - 1; i >= 0; i--) InputSimulator.KeyUp(_voiceKeys[i]);
+            if (_voiceUsedDriver)
+            {
+                _driverKeyboard.SendChord(VoiceTriggerKey, down: false);
+                _voiceUsedDriver = false;
+            }
+            else
+            {
+                for (int i = _voiceKeys.Count - 1; i >= 0; i--) InputSimulator.KeyUp(_voiceKeys[i], scanCode: true);
+            }
             _voiceKeys.Clear();
             _voiceHeld = false;
             _logger.Info($"voice end ({VoiceTriggerKey})");
