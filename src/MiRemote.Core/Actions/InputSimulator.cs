@@ -78,15 +78,16 @@ namespace MiRemote.Core
             // 依赖该标志。缺省时系统把它们归一成普通 Ctrl，豆包无法识别组合。
             if (scanCode)
             {
+                // 必须同时带虚拟键和扫描码，某些输入法只给扫描码会识别不了修饰键。
                 flags |= Win32.KEYEVENTF_SCANCODE | Win32.KEYEVENTF_EXTENDEDKEY;
-                scan = (ushort)Win32.MapVirtualKey(vk, 0);
+                scan = vk == 0xA5 ? (ushort)0x38 : (ushort)Win32.MapVirtualKey(vk, 0);
             }
             var input = new Win32.INPUT
             {
                 type = Win32.INPUT_KEYBOARD,
                 u = new Win32.INPUTUNION
                 {
-                    ki = new Win32.KEYBDINPUT { wVk = scanCode ? (ushort)0 : vk, wScan = scan, dwFlags = flags, time = 0, dwExtraInfo = IntPtr.Zero }
+                    ki = new Win32.KEYBDINPUT { wVk = vk, wScan = scan, dwFlags = flags, time = 0, dwExtraInfo = IntPtr.Zero }
                 }
             };
             Win32.SendInput(1, new[] { input }, Marshal.SizeOf<Win32.INPUT>());

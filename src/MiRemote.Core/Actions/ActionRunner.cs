@@ -68,6 +68,8 @@ namespace MiRemote.Core
         private readonly AppMru _mru;
         private readonly System.Collections.Generic.List<ushort> _voiceKeys = new();
         private readonly InterceptionKeyboard _driverKeyboard = new();
+        private readonly LowLevelKeyBlocker _voiceBlocker = new();
+        private System.Threading.Timer? _voiceRepeat;
         private bool _voiceHeld;
         private bool _voiceUsedDriver;
 
@@ -291,6 +293,10 @@ namespace MiRemote.Core
             _voiceUsedDriver = UseDriverVoice && _driverKeyboard.TryOpen();
             if (_voiceUsedDriver)
             {
+                // 遥控器语音键同时发送 F5；先把 F5 状态抬起来，再屏蔽它的重复事件，
+                // 避免豆包把「F5 + 右 Alt」当成组合键而不触发。
+                _driverKeyboard.SendChord("f5", down: false);
+                _voiceBlocker.Block(0x74, downOnly: true);
                 _driverKeyboard.SendChord(VoiceTriggerKey, down: true);
                 _voiceKeys.Clear();
                 _logger.Info($"voice → {VoiceTriggerKey} (driver)");
@@ -318,10 +324,13 @@ namespace MiRemote.Core
         public void VoiceEnd()
         {
             if (!_voiceHeld) return;
+            _voiceRepeat?.Dispose();
+            _voiceRepeat = null;
             if (_voiceUsedDriver)
             {
                 _driverKeyboard.SendChord(VoiceTriggerKey, down: false);
                 _voiceUsedDriver = false;
+                _voiceBlocker.UnblockAfter(300);
             }
             else
             {

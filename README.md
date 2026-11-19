@@ -28,29 +28,37 @@ JSON 动作沿用原版 `type` 结构。Windows 修饰键为 `ctrl`、`alt`、`s
 
 ## 语音输入
 
-语音键支持“按住说话、松开结束”。默认绑定豆包输入法 Windows 版的语音快捷键 `right_alt`（右 Alt）。
-如果改过豆包设置里的语音快捷键，在「语音」页把触发键改成同一组合即可，例如 `win+ctrl`。
+语音键支持“按住说话、松开结束”。Windows 下通过 Interception 驱动注入右 Alt，触发豆包输入法的语音功能。
 
-- 触发方式：`doubao`（按住组合键说话）/ `dictation`（Win+H 系统听写）/ `none`（关闭）
-- 触发模式：`hold`（按住说话，松开结束）/ `tap`（按一下开始，再按结束）
+### 遥控器麦克风
 
-设置保存在 `%APPDATA%\MiRemote\config.json` 的 `settings.voiceTriggerKey`、`voiceTriggerMode`、`voiceFallback`。
+已移植 ATVV 麦克风链路：MiRemote 通过 BLE GATT 订阅遥控器 ATVV 服务，接收 IMA ADPCM 音频并解码为 16kHz PCM，实时输出到 VB-CABLE 的 `CABLE Input`。
 
-注意：当前实现是模拟按键触发输入法自身的语音功能，使用电脑当前麦克风，不接收遥控器内置麦克风音频。
-完整的 ATVV BLE 遥控器麦克风链路尚未移植。
+使用前需要：
 
-豆包输入法可能过滤普通 `SendInput` 注入。应用提供可选的 Interception 驱动通道，在“语音”页点击“安装语音驱动”并按 UAC 提示确认即可。驱动相关许可见 `thirdparty/Interception/README.md`。
+1. 安装 [VB-CABLE](https://vb-audio.com/Cable/)；
+2. 在豆包输入法语音设置中把麦克风选为 `CABLE Output (VB-Audio Virtual Cable)`。
+
+这样长按遥控器语音键时，豆包使用的就是遥控器内置麦克风。音频同时保留一份 `%APPDATA%\MiRemote\remote-mic.wav` 供排查。
+
+- 触发方式：`doubao`（驱动注入右 Alt）/ `dictation`（Win+H）/ `none`
+- 触发模式：`hold`（按住说话，松开结束）/ `tap`
+- 配置字段：`settings.voiceTriggerKey`、`voiceTriggerMode`、`voiceFallback`
+
+### 音量键限制
+
+当前型号的遥控器音量键不会出现在 Windows Raw Input、HID 报告或 ATVV 控制通道中，因此无法由应用接管。可以改用菜单键打开系统功能菜单执行音量操作。
+
+豆包输入法会过滤普通 `SendInput` 注入，因此使用 Interception 驱动通道。驱动相关许可见 `thirdparty/Interception/README.md`。
 
 ## 实现与验证范围
 
 - 状态机包括短按、长按、双击、OK 手势、临时层、切换层和空闲退出；`--self-test` 验证逻辑与配置序列化。
-- Windows 操作使用 SendInput、Raw Input 和 Win32 窗口 API。
+- Windows 操作使用 SendInput、Raw Input、WinRT BLE 与 Win32 窗口 API。
 - 遥控器默认标识为 VID `0x2717` / PID `0x32B8`，可在配置修改。
 - Raw Input 按键监听不对整个键盘类别注册 NOLEGACY，避免设置窗口和快捷键录制收不到键盘输入。
 
 硬件按键格式、独占拦截、蓝牙重连及系统特殊按键仍需要真实遥控器测试。Raw Input 监听本身不能保证吞掉系统原有按键，不能据逻辑自检推断真机全部可用。
-
-完整 ATVV BLE 遥控器麦克风链路尚未移植。当前语音回退为 Win+H 系统听写，使用电脑当前的麦克风；它不接收遥控器内置麦克风音频。未完成部分会在界面中注明。
 
 ## 许可
 

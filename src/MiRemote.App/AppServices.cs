@@ -15,6 +15,7 @@ namespace MiRemote.App
         public MappingEngine Engine { get; private set; } = null!;
         public KeyRouter Router { get; private set; } = null!;
         public RawInputListener RawInput { get; private set; } = null!;
+        public AtvvBridge RemoteMic { get; private set; } = null!;
 
         private readonly string _logFile;
         private NotifyIcon? _tray;
@@ -80,6 +81,9 @@ namespace MiRemote.App
                 RawInput.Start();
                 Logger.Info("服务已启动");
             }
+
+            RemoteMic = new AtvvBridge(Logger);
+            _ = RemoteMic.StartAsync();
 
             SetupTray();
         }
